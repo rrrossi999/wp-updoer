@@ -1,0 +1,36 @@
+{
+  "name": "wp-updoer",
+  "version": "1.0.0",
+  "description": "A Node.js script to automate the process of updating WordPress sites in bulk, making local backups, and capturing output of important pages to check for potential issues.",
+  "main": "index.js",
+  "dependencies": {
+    "axios": "^0.21.1",
+    "canvas": "^2.11.2",
+    "diff": "^5.0.0",
+    "js-yaml": "^4.1.0",
+    "node-ssh": "^12.0.0",
+    "pixelmatch": "^5.2.1",
+    "puppeteer": "^19.8.5",
+    "resemblejs": "^4.1.0",
+    "ssh2": "^1.5.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dry-run": "node index.js --dry-run",
+    "backup": "node index.js --backup",
+    "keep-backup": "node index.js --keep-backup",
+    "test": "jest"
+  },
+  "keywords": [
+    "wordpress",
+    "wp-cli",
+    "bulk-update",
+    "screenshots",
+    "image-comparison"
+  ],
+  "author": "rossi99x",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.5.0"
+  }
+}

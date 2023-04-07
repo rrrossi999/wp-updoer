@@ -1,0 +1,28 @@
+output: ./output
+thresholds:
+  visual: 99
+  html: 98
+  console: 95
+sites:
+  example1:
+    domain: example1.com
+    credentials:
+      host: example1.website.cloud
+      username: your_website_username
+      password: your_website_password
+      port: your_website_port
+      path: /path/to/wordpress
+    pages:
+      - https://www.example1.com/
+      - https://www.example1.com/about
+  example2:
+    domain: example2.com
+    credentials:
+      host: example2.website.cloud
+      username: your_website_username
+      password: your_website_password
+      port: your_website_port
+      path: /path/to/wordpress
+    pages:
+      - https://www.example2.com/
+      - https://www.example2.com/contact
