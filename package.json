@@ -1,7 +1,7 @@
 {
   "name": "wp-updoer",
-  "version": "1.0.0",
-  "description": "A Node.js script to automate the process of updating WordPress sites in bulk, making local backups, and capturing output of important pages to check for potential issues.",
+  "version": "1.0.1",
+  "description": "Backup, update, and run comparison analysis on multiple Wordpress installations in parallel.",
   "main": "index.js",
   "dependencies": {
     "axios": "^0.21.1",
