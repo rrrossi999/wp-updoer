@@ -1,7 +1,7 @@
 output: ./output
 thresholds:
-  visual: 99
-  html: 98
+  visual: 98
+  html: 95
   console: 95
 sites:
   example1:

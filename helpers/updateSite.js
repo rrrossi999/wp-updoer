@@ -1,48 +1,48 @@
-const { NodeSSH } = require('node-ssh');
+const { Client } = require('ssh2');
 const fs = require('fs');
 
-async function updateSite(site, siteFolder) {
-  const ssh = new NodeSSH();
+const execAsync = require('./execAsync');
 
-  try {
-    //console.log(`Connecting to ${site.domain}...`);
-    await ssh.connect(site.credentials);
-  } catch (error) {
-    console.error(`Error connecting to ${site.domain}: ${error.message}`);
-    return;
-  }
+async function updateSite(site, siteFolder) {
+  const ssh = new Client();
 
   console.log(`Updating ${site.domain}...`);
 
-  try {
-    const updateCommands = [
-      'wp core update --skip-themes --skip-plugins',
-      'wp plugin update --all --skip-themes',
-      'wp theme update --all --skip-plugins',
-    ];
+  const updateCommands = [
+    `wp core update --skip-plugins  --skip-themes --path=${site.credentials.path}`,
+    `wp plugin update --all --skip-plugins  --skip-themes --path=${site.credentials.path}`,
+    `wp theme update --all --skip-plugins  --skip-themes --path=${site.credentials.path}`,
+  ];
 
-    // Create a string to append the output from the remote machine to a file
-    let output = '';
+  // Create a string to append the output from the remote machine to a file
+  let output = '';
 
-    // Run the update commands
-    for (const command of updateCommands) {
-      console.log(`Running "${command}" on ${site.domain}...`);
-      const result = await ssh.execCommand(command, { cwd: site.credentials.path });
-      //console.log(`Output for "${command}" on ${site.domain}:`, result.stdout);
-      output += `${result.stdout}\n`;
-      if (result.stderr) {
-        console.error(`Error running "${command}" on ${site.domain}:`, result.stderr);
-        output += `${result.stderr}\n`;
+  ssh
+    .on('ready', async () => {
+      try {
+        // Run the update commands
+        for (const command of updateCommands) {
+          console.log(`Running "${command}" on ${site.domain}...`);
+          const result = await execAsync(ssh, command, site.credentials.path);
+          output += `${result.stdout}\n`;
+          if (result.stderr) {
+            console.error(`Error running "${command}" on ${site.domain}:`, result.stderr);
+            output += `${result.stderr}\n`;
+          }
+        }
+        // Save the output from the remote machine to a file
+        fs.writeFileSync(`${siteFolder}/updates.txt`, output);
+      } catch (error) {
+        console.error(`Error updating ${site.domain}: ${error.message}`);
+      } finally {
+        ssh.end();
       }
-    }
-    // Save the output from the remote machine to a file
-    fs.writeFileSync(`${siteFolder}/updates.txt`, output);
-
-  } catch (error) {
-    console.error(`Error updating ${site.domain}: ${error.message}`);
-  } finally {
-    ssh.dispose();
-  }
+    })
+    .on('error', (err) => {
+      console.error(`Error connecting to ${site.domain}: ${err.message}`);
+    })
+    .connect(site.credentials);
 }
+
 
 module.exports = updateSite;

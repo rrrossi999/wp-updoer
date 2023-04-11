@@ -1,17 +1,12 @@
 // index.js
 const fs = require('fs');
 const yaml = require('js-yaml');
-const { Client } = require('ssh2');
 const path = require('path');
 const { promisify } = require('util');
-
-const writeFile = promisify(fs.writeFile);
-const unlink = promisify(fs.unlink);
+const ObjectsToCsv = require('objects-to-csv');
 
 const validateSites = require('./helpers/validateSites');
-const takeScreenshots = require('./helpers/takeScreenshots');
-const captureBrowserConsole = require('./helpers/captureBrowserConsole');
-const grabSiteHtml = require('./helpers/grabSiteHtml');
+const capturePage = require('./helpers/capturePage');
 const performBackup = require('./helpers/performBackup');
 const updateSite = require('./helpers/updateSite');
 const clearCache = require('./helpers/clearCache');
@@ -24,16 +19,51 @@ const dryRun = process.argv.includes('--dry-run');
 const backup = process.argv.includes('--backup') || process.argv.includes('--keep-backup');
 const keepBackup = process.argv.includes('--keep-backup');
 const fresh = process.argv.includes('--fresh');
-const config = process.argv.includes('--config');
+const customConfigPath = process.argv.includes('--config');
 
+// main function
 (async () => {
   // Set the config file (default: config.yaml)
-  const configFile = config ? process.argv[process.argv.indexOf('--config') + 1] : 'config.yaml';
+  const configFile = customConfigPath ? process.argv[process.argv.indexOf('--config') + 1] : 'config.yaml';
 
   // Load the configuration from the YAML file
   const config = yaml.load(fs.readFileSync(configFile, 'utf8'));
+  const outputFolder = config.output || './output';
 
-  const thresholds = config.thresholds || { visual: 99, html: 98, console: 95};
+  // Set the default similarity thresholds, beneath which we alert the user to potential issues
+  const defaultVisualThreshold = 98;
+  const defaultHtmlThreshold = 95;
+  const defaultConsoleThreshold = 95;
+  const thresholds = config.thresholds || {
+    visual: defaultVisualThreshold,
+    html: defaultHtmlThreshold,
+    console: defaultConsoleThreshold
+  };
+
+  // Comparison functions and related data for iterating over them
+  const comparisons = [
+    {
+      name: 'visual',
+      compare: compareImages,
+      threshold: thresholds.visual || defaultVisualThreshold,
+      filetype: 'png'
+    }, {
+      name: 'html',
+      compare: compareHtml,
+      threshold: thresholds.html || defaultHtmlThreshold,
+      filetype: 'html'
+    }, {
+      name: 'console',
+      compare: compareConsoleOutput,
+      threshold: thresholds.console || defaultConsoleThreshold,
+      filetype: 'log'
+    },
+  ];
+
+  // If no pages are specified to test, default to the homepage
+  for (site in config.sites) {
+    site.pages = site.pages || [`https://${site.domain}/`];
+  }
 
   // Validate sites and credentials
   try {
@@ -53,16 +83,16 @@ const config = process.argv.includes('--config');
     console.log('Continuing a previous run...');
   } else {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outputFolder = `${config.output}/${timestamp}${dryRun ? '-dry' : ''}`;
-    fs.mkdirSync(outputFolder, { recursive: true });
+    const timestampFolder = `${outputFolder}/${timestamp}${dryRun ? '-dry' : ''}`;
+    fs.mkdirSync(timestampFolder, { recursive: true });
 
     progress = {
-      outputFolder,
+      timestampFolder,
       completedSites: [],
     };
 
     // Save the new progress to the hidden file
-    await writeFile(progressFile, JSON.stringify(progress, null, 2));
+    fs.writeFileSync(progressFile, JSON.stringify(progress, null, 2));
   }
 
   // Filter out the completed sites
@@ -73,14 +103,37 @@ const config = process.argv.includes('--config');
     console.log(`Processing ${site.domain}...`);
 
     // Create a subfolder for the site
-    const siteFolder = `${progress.outputFolder}/${siteKey}`;
-    fs.mkdirSync(siteFolder, { recursive: true });
+    const siteFolder = `${progress.timestampFolder}/${siteKey}`;
+    await fs.promises.mkdir(siteFolder, { recursive: true });
 
-    // Take screenshots, grab site HTML and capture console output before the update
-    console.log(`Capturing screenshots, html and console output for ${site.domain} before the update...`);
-    await takeScreenshots(site, siteFolder, 'before');
-    await grabSiteHtml(site, siteFolder, 'before');
-    await captureBrowserConsole(site, siteFolder, 'before');
+    // Set up site paths and page paths
+    const pages = []
+    for (url of site.pages) {
+      const sanitizedUrl = url.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const pageFolder = `${siteFolder}/${sanitizedUrl}`;
+
+      await fs.promises.mkdir(pageFolder, { recursive: true });
+
+      const comparisonFiles = {};
+      for (comparison of comparisons) {
+        comparisonFiles[comparison.name] = {
+          name: comparison.name,
+          before: `${pageFolder}/before.${comparison.filetype}`,
+          after: `${pageFolder}/after.${comparison.filetype}`,
+        };
+      }
+      pages.push({
+        url: url,
+        folder: pageFolder,
+        comparisonFiles: comparisonFiles,
+      });
+    }
+
+    // Process each page in parallel until they are all done
+    const processBeforePagePromises = pages.map(async (page) => {
+      await capturePage(page, 'before');
+    });
+    await Promise.all(processBeforePagePromises);
 
     // Backup site if the backup option is enabled
     if (backup) {
@@ -98,20 +151,45 @@ const config = process.argv.includes('--config');
       await clearCache(site);
 
       // Take screenshots and capture console output after the update
-      // console.log(`Capturing screenshots and console output for ${site.domain} after the update...`);
-      await takeScreenshots(site, siteFolder, 'after');
-      await grabSiteHtml(site, siteFolder, 'after');
-      await captureBrowserConsole(site, siteFolder, 'after');
+      const processAfterPagePromises = pages.map(async (page) => {
+        await capturePage(page, 'after');
+      });
+      await Promise.all(processAfterPagePromises);
 
-      // Compare the before and after screenshots
-      // console.log(`Comparing screenshots for ${site.domain}...`);
-      const comparisonResults = await compareImages(site, siteFolder, thresholds.visual);
+      // Create a results object to store the results of the comparisons for csv output
+      const results = [];
 
-      // Compare the before and after HTML
-      const htmlIssues = await compareHtml(site, siteFolder, thresholds.html);
+      console.log(`Running comparisons for ${site.domain}...`);
+      for (const page of pages) {
+        for (const comparison of comparisons) {
+          const encoding = comparison.name === 'visual' ? null : 'utf-8';
+          const before = fs.readFileSync(page.comparisonFiles[comparison.name].before, encoding);
+          const after = fs.readFileSync(page.comparisonFiles[comparison.name].after, encoding);
 
-      // Compare the before and after console output
-      const consoleIssues = await compareConsoleOutput(site, siteFolder, thresholds.console);
+          const rawScore = await comparison.compare(before, after);
+          // round the score to 2 decimal places
+          const score = Math.round(rawScore * 100) / 100;
+
+          // if the score is below the threshold, throw a warning
+          if (score < comparison.threshold) {
+            console.warn(`\x1b[33m ALERT: ${comparison.name} comparison score ${score} for ${site.domain} ${page.url} is below the threshold of ${comparison.threshold}%\x1b[0m`);
+          }
+
+          // write the score to the results list
+          results.push({
+            site: siteKey,
+            url: page.url,
+            comparison: comparison.name,
+            score: score,
+            pass: score >= comparison.threshold ? 'YES' : 'NO',
+          });
+        }
+      }
+      // Write the results to a csv file
+      const csv = new ObjectsToCsv(results);
+      await csv.toDisk(`${siteFolder}/results.csv`);
+      results.length = 0;
+
     } else {
       console.log(`Dry run: Skipping update for ${site.domain}`);
     }
@@ -120,21 +198,19 @@ const config = process.argv.includes('--config');
     progress.completedSites.push(siteKey);
 
     // Update the progress in the hidden file
-    await writeFile(progressFile, JSON.stringify(progress, null, 2));
+    await fs.promises.writeFile(progressFile, JSON.stringify(progress, null, 2));
 
-    // Say we're done with the site
+    // Say we're done with this site
     console.log('\x1b[32m%s\x1b[0m', `Done processing ${site.domain}.`);
-
   });
 
   // Wait for all sites to finish processing
   await Promise.all(processSitePromises);
-  
+
   // Delete the progress file
-  await unlink(progressFile);
-  
+  await fs.promises.unlink(progressFile);
+
   // Say we're done with all sites
   console.log('\x1b[32m%s\x1b[0m', "That's it! Finished processing all sites. Check it out now. Ciao!");
 })();
-  
-  
+

@@ -2,6 +2,8 @@ const fs = require('fs');
 const { Client } = require('ssh2');
 const path = require('path');
 
+const execAsync = require('./execAsync');
+
 /**
  * Create a backup of the WordPress database and files for a site.
  * @param {Object} site - The site configuration object.
@@ -66,30 +68,5 @@ async function performBackup(site, outputFolder, keepBackup) {
   });
 }
 
-/**
- * Helper function to execute a command via SSH using async/await
- * @param {Object} client - The SSH client instance.
- * @param {String} command - The command to execute.
- */
-function execAsync(client, command) {
-  return new Promise((resolve, reject) => {
-    client.exec(command, (err, stream) => {
-      if (err) {
-        reject(err);
-      } else {
-        stream
-          .on('close', (code, signal) => {
-            resolve();
-          })
-          .on('data', (data) => {
-            // Do nothing with the data
-          })
-          .stderr.on('data', (data) => {
-            // Do nothing with the data
-          });
-      }
-    });
-  });
-}
 
 module.exports = performBackup;

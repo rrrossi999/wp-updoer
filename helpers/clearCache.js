@@ -1,6 +1,8 @@
 const axios = require('axios');
-const { NodeSSH } = require('node-ssh');
+const { Client } = require('ssh2');
 const https = require('https');
+
+const execAsync = require('./execAsync');
 
 async function clearKinstaCache(siteDomain) {
   try {
@@ -16,16 +18,8 @@ async function clearKinstaCache(siteDomain) {
 }
 
 async function clearCache(site) {
+  const ssh = new Client();
 
-  const ssh = new NodeSSH();
-
-  try {
-    console.log(`Connecting to ${site.domain}...`);
-    await ssh.connect(site.credentials);
-  } catch (error) {
-    console.error(`Error connecting to ${site.domain}: ${error.message}`);
-    return;
-  }
   const cachePlugins = [
     {
       name: 'wp-super-cache',
@@ -52,17 +46,28 @@ async function clearCache(site) {
   // Clear Kinsta cache
   await clearKinstaCache(site.domain);
 
-  for (const plugin of cachePlugins) {
-    // Check if the plugin is active
-    const isActive = await ssh.execCommand(`wp plugin is-active ${plugin.name}`);
+  ssh
+    .on('ready', async () => {
+      console.log(`Connected to ${site.domain}.`);
 
-    // If the plugin is active, run the cache-clearing command
-    if (isActive.stdout.trim() === 'Active') {
-      await ssh.execCommand(plugin.command);
-    }
-  }
+      for (const plugin of cachePlugins) {
+        // Check if the plugin is active
+        const isActive = await execAsync(ssh, `wp plugin is-active ${plugin.name}`);
 
-  ssh.dispose();
+        // If the plugin is active, run the cache-clearing command
+        if (isActive.stdout.trim() === 'Active') {
+          await execAsync(ssh, plugin.command);
+        }
+      }
+
+      ssh.end();
+    })
+    .on('error', (err) => {
+      console.error(`Error connecting to ${site.domain}: ${err.message}`);
+    })
+    .connect(site.credentials);
 }
 
+
 module.exports = clearCache;
+
